@@ -18,10 +18,15 @@ class MoabDiy(CMakePackage):
     depends_on('mpich')
     depends_on('hdf5+mpi+hl', type='link')
     depends_on('moab', type='link')
-    depends_on('diy', type='link')
+    depends_on('diy')
+    depends_on('fmt')
 
     def cmake_args(self):
         args = ['-DCMAKE_C_COMPILER=%s' % self.spec['mpich'].mpicc,
                 '-DCMAKE_CXX_COMPILER=%s' % self.spec['mpich'].mpicxx,
+                '-DDIY_PATH=%s' % self.spec['diy'].prefix,
+                '-DMOAB_PATH=%s' % self.spec['moab'].prefix,
+                '-DFMT_PATH=%s' % self.spec['fmt'].prefix,
+                '-DHDF5_PATH=%s' % self.spec['hdf5'].prefix,
                 '-DBUILD_SHARED_LIBS=false']
         return args

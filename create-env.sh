@@ -31,8 +31,6 @@ spack env activate $SPACKENV
 
 # set build flags
 echo "setting flags for building moab-example"
-export MOAB_PATH=`spack location -i moab`
-export DIY_PATH=`spack location -i diy`
 export MOAB_DIY_PATH=`spack location -i moab-example`
 
 # set LD_LIBRARY_PATH
