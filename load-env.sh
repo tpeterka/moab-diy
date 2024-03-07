@@ -8,6 +8,7 @@ echo "activated spack environment $SPACKENV"
 
 echo "setting flags for building moab-example"
 export MOAB_PATH=`spack location -i moab`
+export DIY_PATH=`spack location -i diy`
 export MOAB_DIY_PATH=`spack location -i moab-example`
 
 echo "setting flags for running moab-example"

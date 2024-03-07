@@ -29,7 +29,15 @@ endif                       ()
 find_package                (Threads)
 
 # DIY
-find_package                (diy REQUIRED)
+if                          (DIY_PATH)
+    message                 ("Found DIY_PATH")
+    set                     (DIY_INCLUDE_DIR ${DIY_PATH}/include)
+else                        ()
+    message                 ("Looking for DIY")
+    find_package            (diy REQUIRED)
+endif                       ()
+message                     ("DIY_INCLUDE_DIR = ${DIY_INCLUDE_DIR}")
+include_directories         (SYSTEM ${DIY_INCLUDE_DIR})
 
 # fmt
 find_package                (fmt REQUIRED)
