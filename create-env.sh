@@ -18,8 +18,8 @@ echo "activating spack environment"
 spack env activate $SPACKENV
 
 # add moab-diy in develop mode
-spack develop moab-diy@main build_type=Debug
-spack add moab-diy
+# spack develop moab-diy@main build_type=Debug
+# spack add moab-diy
 
 # install everything in environment
 echo "installing dependencies in environment"
@@ -32,6 +32,10 @@ spack env activate $SPACKENV
 # set build flags
 echo "setting flags for building moab-example"
 export MOAB_DIY_PATH=`spack location -i moab-example`
+export DIY_PATH=`spack location -i diy`
+export FMT_PATH=`spack location -i fmt`
+export MOAB_PATH=`spack location -i moab`
+export HDF5_PATH=`spack location -i hdf5`
 
 # set LD_LIBRARY_PATH
 echo "setting flags for running moab-example"

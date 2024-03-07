@@ -29,6 +29,10 @@ endif                       ()
 find_package                (Threads)
 
 # DIY
+if                          (NOT DEFINED DIY_PATH AND DEFINED ENV{DIY_PATH})
+    set                     (DIY_PATH $ENV{DIY_PATH})
+endif                       ()
+
 if                          (DIY_PATH)
     message                 ("Found DIY_PATH")
     set                     (DIY_INCLUDE_DIR ${DIY_PATH}/include)
@@ -40,6 +44,10 @@ message                     ("DIY_INCLUDE_DIR = ${DIY_INCLUDE_DIR}")
 include_directories         (SYSTEM ${DIY_INCLUDE_DIR})
 
 # fmt
+if                          (NOT DEFINED FMT_PATH AND DEFINED ENV{FMT_PATH})
+    set                     (FMT_PATH $ENV{FMT_PATH})
+endif                       ()
+
 if                          (FMT_PATH)
     message                 ("Found FMT_PATH")
     set                     (FMT_INCLUDE_DIR ${FMT_PATH}/include)
@@ -51,6 +59,10 @@ message                     ("FMT_INCLUDE_DIR = ${FMT_INCLUDE_DIR}")
 include_directories         (SYSTEM ${FMT_INCLUDE_DIR})
 
 # Moab
+if                          (NOT DEFINED MOAB_PATH AND DEFINED ENV{MOAB_PATH})
+    set                     (MOAB_PATH $ENV{MOAB_PATH})
+endif                       ()
+
 if                          (MOAB_PATH)
     message                 ("Found MOAB_PATH")
     set                     (MOAB_LIBRARY ${MOAB_PATH}/lib/libMOAB.so)
@@ -68,6 +80,10 @@ set                         (libraries ${libraries} ${MOAB_LIBRARY} ${MOAB_IMESH
 include_directories         (SYSTEM ${MOAB_INCLUDE_DIR})
 
 # HDF5
+if                          (NOT DEFINED HDF5_PATH AND DEFINED ENV{HDF5_PATH})
+    set                     (HDF5_PATH $ENV{HDF5_PATH})
+endif                       ()
+
 if                          (HDF5_PATH)
     set                     (HDF5_LIBRARY ${HDF5_PATH}/lib/libhdf5.so)
     set                     (HDF5_HL_LIBRARY ${HDF5_PATH}/lib/libhdf5_hl.so)
