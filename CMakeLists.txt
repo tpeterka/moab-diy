@@ -29,6 +29,10 @@ endif                       ()
 find_package                (Threads)
 
 # DIY
+if                          (NOT DEFINED DIY_PATH AND DEFINED ENV{DIY_PATH})
+    set                     (DIY_PATH $ENV{DIY_PATH})
+endif                       ()
+
 if                          (DIY_PATH)
     message                 ("Found DIY_PATH")
     set                     (DIY_INCLUDE_DIR ${DIY_PATH}/include)
