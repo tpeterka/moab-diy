@@ -4,13 +4,13 @@
 #include    <cassert>
 
 // diy
-#include    <diy/mpi/communicator.hpp>
+#include    <diy/master.hpp>
 #include    <diy/decomposition.hpp>
 #include    <diy/assigner.hpp>
+// #include    <diy/types.hpp>
 
+// fmt
 #include    <fmt/format.h>
-
-// #include    <hdf5.h>
 
 // moab
 #include    "iMesh.h"
@@ -22,7 +22,7 @@
 #include    "moab/HomXform.hpp"
 #include    "moab/ReadUtilIface.hpp"
 
-using communicator  = MPI_Comm;
+using mpi_comm      = MPI_Comm;
 using diy_comm      = diy::mpi::communicator;
 using Bounds        = diy::DiscreteBounds;
 

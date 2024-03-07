@@ -1,7 +1,7 @@
 set                         (targets    main)
 
 foreach                     (t ${targets})
-  add_executable            (${t} ${t}.cpp)
+  add_executable            (${t} ${t}.cpp mesh_gen.cpp)
   target_link_libraries     (${t} ${libraries})
 endforeach                  ()
 
