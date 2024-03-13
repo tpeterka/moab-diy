@@ -3,10 +3,6 @@
 export SPACKENV=moab-diy-env
 export YAML=$PWD/env.yaml
 
-# add custom spack repos
-echo "adding custom spack repo for moab-diy"
-spack repo add . > /dev/null 2>&1
-
 # create spack environment
 echo "creating spack environment $SPACKENV"
 spack env deactivate > /dev/null 2>&1
@@ -31,7 +27,6 @@ spack env activate $SPACKENV
 
 # set build flags
 echo "setting flags for building moab-example"
-export MOAB_DIY_PATH=`spack location -i moab-example`
 export DIY_PATH=`spack location -i diy`
 export FMT_PATH=`spack location -i fmt`
 export MOAB_PATH=`spack location -i moab`

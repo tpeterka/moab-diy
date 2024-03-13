@@ -7,7 +7,6 @@
 #include    <diy/master.hpp>
 #include    <diy/decomposition.hpp>
 #include    <diy/assigner.hpp>
-// #include    <diy/types.hpp>
 
 // fmt
 #include    <fmt/format.h>
@@ -21,14 +20,30 @@
 #include    "moab/ParallelComm.hpp"
 #include    "moab/HomXform.hpp"
 #include    "moab/ReadUtilIface.hpp"
+#include    "moab/CN.hpp"
 
 using mpi_comm      = MPI_Comm;
 using diy_comm      = diy::mpi::communicator;
 using Bounds        = diy::DiscreteBounds;
 
+struct Block
+{
+  static void*    create()                                    { return new Block; }
+  static void     destroy(void* b)                            { delete static_cast<Block*>(b); }
+  static void     save(const void* b, diy::BinaryBuffer& bb)  { diy::save(bb, *static_cast<const Block*>(b)); }
+  static void     load(void* b, diy::BinaryBuffer& bb)        { diy::load(bb, *static_cast<Block*>(b)); }
+
+  // TODO: add user-defined member functions
+
+  // TODO: add  user-defined data members
+  int           gid;    // global id of this block
+  EntityHandle  eh;     // root of everything moab-related in this block
+};
+
 #define ERR {if(rval!=MB_SUCCESS)printf("MOAB error at line %d in %s\n", __LINE__, __FILE__);}
 
 using namespace moab;
+using namespace std;
 
 void hex_mesh_gen(int *mesh_size, Interface *mbint, EntityHandle *mesh_set,
         ParallelComm *mbpc, diy::RegularDecomposer<Bounds>& decomp, diy::RoundRobinAssigner& assign);

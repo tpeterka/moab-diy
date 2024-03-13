@@ -7,7 +7,6 @@ spack env activate $SPACKENV
 echo "activated spack environment $SPACKENV"
 
 echo "setting flags for building moab-example"
-export MOAB_DIY_PATH=`spack location -i moab-example`
 export DIY_PATH=`spack location -i diy`
 export FMT_PATH=`spack location -i fmt`
 export MOAB_PATH=`spack location -i moab`

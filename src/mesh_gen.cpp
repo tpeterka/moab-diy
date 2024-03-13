@@ -30,7 +30,7 @@ void tet_mesh_gen(int *mesh_size,                        // mesh size (i,j,k) nu
 // create hex cells and vertices
 void create_hexes_and_verts(int *mesh_size,     // mesh size (i,j,k) number of vertices in each dim
         Interface *mbint,                       // moab interface instance
-        EntityHandle *mesh_set,                 // moab mesh set
+        EntityHandle *mesh_set,                 // moab root set
         diy::RegularDecomposer<Bounds>& decomp, // diy decomposition
         diy::RoundRobinAssigner& assign,        // diy assignment
         ParallelComm *mbpc)                     // moab communicator
@@ -217,7 +217,7 @@ void create_hexes_and_verts(int *mesh_size,     // mesh size (i,j,k) number of v
 // create tet cells and vertices
 void create_tets_and_verts(int *mesh_size,      // mesh size (i,j,k) number of vertices in each dim
         Interface *mbint,                       // moab interface instance
-        EntityHandle *mesh_set,                 // moab parallel communicator
+        EntityHandle *mesh_set,                 // moab root set
         diy::RegularDecomposer<Bounds>& decomp, // diy decomposition
         diy::RoundRobinAssigner& assign,        // diy assignment
         ParallelComm *mbpc)                     // moab communicator
