@@ -1,4 +1,5 @@
 #include "main.hpp"
+#include "opts.h"
 
 int main(int argc, char**argv)
 {
@@ -6,6 +7,29 @@ int main(int argc, char**argv)
     diy::mpi::environment  env(argc, argv);     // equivalent of MPI_Init(argc, argv)/MPI_Finalize()
     diy::mpi::communicator world;               // equivalent of MPI_COMM_WORLD
 
+    // command line options
+    int     dim = 3;                            // domain dimensionality
+    bool    help;
+
+    using namespace opts;
+    Options ops;
+    ops
+        >> Option('d', "dimension", dim,            "domain dimensionality")
+        >> Option('h', "help",      help,           "show help")
+        ;
+
+    if (!ops.parse(argc,argv) || help)
+    {
+        if (world.rank() == 0)
+        {
+            std::cout << "Usage: " << argv[0] << " [OPTIONS]\n";
+            std::cout << "Imports a MOAB parallel partition into a DIY block decomposition\n";
+            std::cout << ops;
+        }
+        return 1;
+    }
+
+    // moab options
     std::string infile      = "/home/tpeterka/software/moab-diy/sample_data/mpas_2d_source_p128.h5m";
     std::string read_opts   = "PARALLEL=READ_PART;PARTITION=PARALLEL_PARTITION;PARALLEL_RESOLVE_SHARED_ENTS;DEBUG_IO=0;";
     std::string outfile     = "outfile.h5m";
@@ -22,7 +46,7 @@ int main(int argc, char**argv)
     ErrorCode                       rval;
     rval = mbi->create_meshset(MESHSET_SET, root); ERR;
 
-#if 1
+#if 0
 
     // create mesh in memory
     PrepMesh(mesh_type, mesh_size, mesh_slab, mbi, pc, root, factor, false);
@@ -71,7 +95,7 @@ int main(int argc, char**argv)
         // create the block
         Block* b = new Block;
         b->eh = *part_it;
-        rval = mbi->tag_get_data(part_tag, &b->eh, 1, &b->gid);
+        rval = mbi->tag_get_data(part_tag, &b->eh, 1, &b->gid); ERR;
         fmt::print(stderr, "gid = {}\n", b->gid);
 
         // create a link for the block
@@ -83,50 +107,35 @@ int main(int argc, char**argv)
         Range ents;
         rval = mbi->get_entities_by_handle(b->eh, ents); ERR;
         fmt::print(stderr, "ents.size() = {}\n", ents.size());
-        for (Range::iterator ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
+        for (auto ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
         {
+            // get adjacent elements
+            Range adjs;
+            rval = mbi->get_adjacencies(&(*ents_it), 1, dim, true, adjs, Interface::UNION); ERR;
+            cout << CN::EntityTypeName(mbi->type_from_handle(*ents_it)) << " " << mbi->id_from_handle(*ents_it) << " adjacent elements:" << endl;
+            adjs.print();
+
             // get vertices comprising the element
             const EntityHandle* verts;
             int num_verts;
             rval = mbi->get_connectivity(*ents_it, verts, num_verts); ERR;
-            for( int i = 0; i < num_verts; i++ )
+            for (int i = 0; i < num_verts; i++)
             {
-                // get block containing each vertex
-                Range vert_sets;
-                rval = mbi->get_adjacencies(&verts[i], 1, MBENTITYSET, false, vert_sets, Interface::UNION); ERR;
-                cout << CN::EntityTypeName(mbi->type_from_handle(verts[i])) << " " << mbi->id_from_handle(verts[i]) << " is contained in sets: " << endl;
-                vert_sets.print();
-
                 // get elements sharing this vertex
                 Range adjs;
-                rval = mbi->get_adjacencies(&verts[i], 1, 3, false, adjs, Interface::UNION); ERR;
+                rval = mbi->get_adjacencies(&verts[i], 1, dim, false, adjs, Interface::UNION); ERR;
                 cout << CN::EntityTypeName(mbi->type_from_handle(*ents_it)) << " " << mbi->id_from_handle(*ents_it) << " Vertex " << mbi->id_from_handle(verts[i]) <<
-                    " is adjacencent to " << endl;
+                    " is adjacent to " << endl;
                 adjs.print();
-
-                // get block containing each element
-                for (auto adj_it = adjs.begin(); adj_it != adjs.end(); ++adj_it)
-                {
-                    Range sets;
-                    rval = mbi->get_adjacencies(&(*adj_it), 1, MBENTITYSET, false, sets, Interface::UNION); ERR;
-                    cout << CN::EntityTypeName(mbi->type_from_handle(*adj_it)) << " " << mbi->id_from_handle(*adj_it) << " is contained in sets: " << endl;
-                    sets.print();
-                }
             }
 
-//                 cout << CN::EntityTypeName(mbi->type_from_handle(*it)) << " " << mbi->id_from_handle(*it) << " vertex connectivity is: " << connect.print() << endl;
-//                 fmt::print(stderr, "{} {} vertex connectivity is: ", CN::EntityTypeName(mbi->type_from_handle(*it)), mbi->id_from_handle(*it));
-//                 std::vector<EntityHandle> parents;
-//                 for (int i = 0; i < num_connect; i++)
-//                 {
-//                     parents.clear();
-//                     rval = mbi->get_parent_meshsets(connect[i], parents); ERR;
-//                     if (parents.size())
-//                         fmt::print(stderr, "{} parents [{}] ", mbi->id_from_handle(connect[i]), fmt::join(parents, ","));
-//                     fmt::print(stderr, "{} ", mbi->id_from_handle(connect[i]));
-//                 }
-//                 fmt::print(stderr, "\n");
-//             }
+            // iterate over adjacent elements
+            for (auto adjs_iter = adjs.begin(); adjs_iter != adjs.end(); adjs_iter++)
+            {
+                long elem_global_id;
+                rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_iter), 1, &elem_global_id); ERR;
+                fmt::print(stderr, "Entity local id {} global id {}\n", mbi->id_from_handle(*adjs_iter), elem_global_id);
+            }
         }
 
         // add the block to the master
