@@ -88,62 +88,144 @@ int main(int argc, char**argv)
     // create a dynamic assinger because we need to explicitly specify how many each rank has
     diy::DynamicAssigner assigner(world, world.size(), tot_nblocks);
 
-    // loop over local blocks, filling in their entities, adding blocks to the master, assigner, creating their links
+    // loop over local blocks, filling in the map of entities to parts
     Range::iterator part_it;
+    std::map<long, int> entity_part_map;                // entity global id -> part id
+    for (part_it = parts.begin(); part_it != parts.end(); ++part_it )
+    {
+        int part_id;
+        rval = mbi->tag_get_data(part_tag, &(*part_it), 1, &part_id); ERR;
+
+        // get all entities in the block
+        Range ents;
+        rval = mbi->get_entities_by_handle(*part_it, ents); ERR;
+        fmt::print(stderr, "part_id (block gid) = {} ents.size() = {}\n", part_id, ents.size());
+        for (auto ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
+        {
+            int ent_global_id;                          // globally unique ID for the entity
+            rval = mbi->tag_get_data(mbi->globalId_tag(), &(*ents_it), 1, &ent_global_id); ERR;
+//             fmt::print(stderr, "Entity local id {} global id {}\n", mbi->id_from_handle(*ents_it), ent_global_id);
+            entity_part_map.emplace(ent_global_id, part_id);
+        }
+    }
+
+    // debug: print the entity_part_map
+//     for (auto it = entity_part_map.begin(); it != entity_part_map.end(); it++)
+//         fmt::print(stderr, "entity_part_map[{}] = {}\n", it->first, it->second);
+
+    // loop over local blocks, filling in their entities, adding blocks to the master, assigner, creating their links
     for (part_it = parts.begin(); part_it != parts.end(); ++part_it )
     {
         // create the block
         Block* b = new Block;
         b->eh = *part_it;
         rval = mbi->tag_get_data(part_tag, &b->eh, 1, &b->gid); ERR;
-        fmt::print(stderr, "gid = {}\n", b->gid);
+//         fmt::print(stderr, "gid = {}\n", b->gid);
 
         // create a link for the block
         diy::Link*      link = new diy::Link;           // link is this block's neighborhood
         diy::BlockID    neighbor;                       // one neighboring block
-        // TODO fill in the link
 
         // get all entities in the block
         Range ents;
         rval = mbi->get_entities_by_handle(b->eh, ents); ERR;
-        fmt::print(stderr, "ents.size() = {}\n", ents.size());
+//         fmt::print(stderr, "ents.size() = {}\n", ents.size());
         for (auto ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
         {
-            // get adjacent elements
-            Range adjs;
-            rval = mbi->get_adjacencies(&(*ents_it), 1, dim, true, adjs, Interface::UNION); ERR;
-            cout << CN::EntityTypeName(mbi->type_from_handle(*ents_it)) << " " << mbi->id_from_handle(*ents_it) << " adjacent elements:" << endl;
-            adjs.print();
-
             // get vertices comprising the element
-            const EntityHandle* verts;
-            int num_verts;
-            rval = mbi->get_connectivity(*ents_it, verts, num_verts); ERR;
-            for (int i = 0; i < num_verts; i++)
+            Range verts;
+            rval = mbi->get_connectivity(&(*ents_it), 1, verts); ERR;
+            for (auto verts_it = verts.begin(); verts_it != verts.end(); ++verts_it)
             {
                 // get elements sharing this vertex
                 Range adjs;
-                rval = mbi->get_adjacencies(&verts[i], 1, dim, false, adjs, Interface::UNION); ERR;
-                cout << CN::EntityTypeName(mbi->type_from_handle(*ents_it)) << " " << mbi->id_from_handle(*ents_it) << " Vertex " << mbi->id_from_handle(verts[i]) <<
-                    " is adjacent to " << endl;
-                adjs.print();
-            }
+                rval = mbi->get_adjacencies(&(*verts_it), 1, dim, false, adjs, Interface::UNION); ERR;
+//                 cout << CN::EntityTypeName(mbi->type_from_handle(*ents_it)) << " " << mbi->id_from_handle(*ents_it) << " Vertex " << mbi->id_from_handle(verts[i]) <<
+//                     " is adjacent to " << endl;
+//                 adjs.print();
 
-            // iterate over adjacent elements
-            for (auto adjs_iter = adjs.begin(); adjs_iter != adjs.end(); adjs_iter++)
-            {
-                long elem_global_id;
-                rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_iter), 1, &elem_global_id); ERR;
-                fmt::print(stderr, "Entity local id {} global id {}\n", mbi->id_from_handle(*adjs_iter), elem_global_id);
+                // iterate over adjacent elements
+                for (auto adjs_iter = adjs.begin(); adjs_iter != adjs.end(); adjs_iter++)
+                {
+                    long elem_global_id;
+                    int neigh_gid;
+                    rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_iter), 1, &elem_global_id); ERR;
+                    auto map_it = entity_part_map.find(elem_global_id);
+                    if (map_it == entity_part_map.end())
+                    {
+                        fmt::print(stderr, "Error: element global id {} not found in entity_part_map\n", elem_global_id);
+                        abort();
+                    }
+                    else
+                    {
+                        neigh_gid = map_it->second;                                     // neighboring block containing the adjacent element
+//                      int neigh_gid = entity_part_map[elem_global_id];                    // neighboring block containing the ajacent element
+//                         fmt::print(stderr, "Entity local id {} global id {} block gid {}\n", mbi->id_from_handle(*adjs_iter), elem_global_id, neigh_gid);
+                    }
+                    // add the block to the link
+                    if (link->find(neigh_gid) == -1 && neigh_gid != b->gid)
+                    {
+                        neighbor.gid    = neigh_gid;
+                        neighbor.proc   = world.rank();
+                        link->add_neighbor(neighbor);
+                    }
+                }
             }
+        }   // for all entities in the local block
+
+        // get entities owned by my process and shared with other processors
+        Range shared_ents;
+//         rval = pc->get_shared_entities(-1, shared_ents, MBVERTEX, false, true); ERR;
+        rval = pc->get_shared_entities(-1, shared_ents, MBVERTEX); ERR;
+        cout << "shared entities: " << endl;
+        shared_ents.print();
+
+        // shared entities owned by my process
+        Range my_shared_ents;
+        rval = pc->filter_pstatus(shared_ents, PSTATUS_NOT_OWNED, PSTATUS_NOT, -1, &my_shared_ents ); ERR;
+
+        // shared entities owned by other processes
+        Range other_shared_ents;
+        rval = pc->filter_pstatus(shared_ents, PSTATUS_NOT_OWNED, PSTATUS_AND, -1, &other_shared_ents); ERR;
+
+        // collect sending messages
+        for (auto my_shared_it = my_shared_ents.begin(); my_shared_it != my_shared_ents.end(); my_shared_it++)
+        {
+            std::set<int> send_procs;                   // processes to which I will send
+            pc->get_sharing_data(&(*my_shared_it), 1, send_procs);
+            cout << CN::EntityTypeName(mbi->type_from_handle(*my_shared_it)) << " " << mbi->id_from_handle(*my_shared_it) <<
+                " will be sent to " << send_procs.size() <<  " procs:" << endl;
+            for (auto send_procs_iter = send_procs.begin(); send_procs_iter != send_procs.end(); send_procs_iter++)
+                fmt::print(stderr, "{}\n", *send_procs_iter);
+            // TODO assemble a set of block gids for each unique process found and send
         }
+
+        // collect receiving messages
+        for (auto other_shared_it = other_shared_ents.begin(); other_shared_it != other_shared_ents.end(); other_shared_it++)
+        {
+            std::set<int> recv_procs;                   // processes from which I will receive
+            pc->get_sharing_data(&(*other_shared_it), 1, recv_procs);
+            cout << CN::EntityTypeName(mbi->type_from_handle(*other_shared_it)) << " " << mbi->id_from_handle(*other_shared_it) <<
+                " will be received from " << recv_procs.size() <<  " procs:" << endl;
+            for (auto recv_procs_iter = recv_procs.begin(); recv_procs_iter != recv_procs.end(); recv_procs_iter++)
+                fmt::print(stderr, "{}\n", *recv_procs_iter);
+            // TODO assemble a set of unique processes from which to receive, receive block gids, and add them to the link
+        }
+
+        // TODO: exchange link info with remote blocks
 
         // add the block to the master
         master.add(b->gid, b, link);
 
         // add the block to the assigner
         assigner.set_rank(world.rank(), b->gid);
-    }
+
+        // debug: print the link
+//         fmt::print(stderr, "Link for block gid {} has size {}:\n", b->gid, link->size());
+//         for (auto i = 0; i < link->size(); i++)
+//             fmt::print(stderr, "[gid, proc] = [{}, {}]\n", link->target(i).gid, link->target(i).proc);
+
+    }   // for all local blocks
 
     // write output file for debugging
     rval = mbi->write_file(outfile.c_str(), 0, write_opts.c_str(), &root, 1); ERR;
