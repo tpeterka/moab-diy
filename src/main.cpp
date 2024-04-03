@@ -88,6 +88,8 @@ int main(int argc, char**argv)
     // create a dynamic assinger because we need to explicitly specify how many each rank has
     diy::DynamicAssigner assigner(world, world.size(), tot_nblocks);
 
+    NeighBlocks send_neigh_blocks, recv_neigh_blocks;   // map of (neighboring rank, vector of my neighboring blocks) to send, receive
+
     // loop over local blocks, filling in the map of entities to parts
     Range::iterator part_it;
     std::map<long, int> entity_part_map;                // entity global id -> part id
@@ -130,6 +132,8 @@ int main(int argc, char**argv)
         Range ents;
         rval = mbi->get_entities_by_handle(b->eh, ents); ERR;
 //         fmt::print(stderr, "ents.size() = {}\n", ents.size());
+
+        // for all entities in local block
         for (auto ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
         {
             // get vertices comprising the element
@@ -157,11 +161,8 @@ int main(int argc, char**argv)
                         abort();
                     }
                     else
-                    {
                         neigh_gid = map_it->second;                                     // neighboring block containing the adjacent element
-//                      int neigh_gid = entity_part_map[elem_global_id];                    // neighboring block containing the ajacent element
-//                         fmt::print(stderr, "Entity local id {} global id {} block gid {}\n", mbi->id_from_handle(*adjs_iter), elem_global_id, neigh_gid);
-                    }
+
                     // add the block to the link
                     if (link->find(neigh_gid) == -1 && neigh_gid != b->gid)
                     {
@@ -173,59 +174,173 @@ int main(int argc, char**argv)
             }
         }   // for all entities in the local block
 
-        // get entities owned by my process and shared with other processors
-        Range shared_ents;
-//         rval = pc->get_shared_entities(-1, shared_ents, MBVERTEX, false, true); ERR;
-        rval = pc->get_shared_entities(-1, shared_ents, MBVERTEX); ERR;
-        cout << "shared entities: " << endl;
-        shared_ents.print();
-
-        // shared entities owned by my process
-        Range my_shared_ents;
-        rval = pc->filter_pstatus(shared_ents, PSTATUS_NOT_OWNED, PSTATUS_NOT, -1, &my_shared_ents ); ERR;
-
-        // shared entities owned by other processes
-        Range other_shared_ents;
-        rval = pc->filter_pstatus(shared_ents, PSTATUS_NOT_OWNED, PSTATUS_AND, -1, &other_shared_ents); ERR;
-
-        // collect sending messages
-        for (auto my_shared_it = my_shared_ents.begin(); my_shared_it != my_shared_ents.end(); my_shared_it++)
-        {
-            std::set<int> send_procs;                   // processes to which I will send
-            pc->get_sharing_data(&(*my_shared_it), 1, send_procs);
-            cout << CN::EntityTypeName(mbi->type_from_handle(*my_shared_it)) << " " << mbi->id_from_handle(*my_shared_it) <<
-                " will be sent to " << send_procs.size() <<  " procs:" << endl;
-            for (auto send_procs_iter = send_procs.begin(); send_procs_iter != send_procs.end(); send_procs_iter++)
-                fmt::print(stderr, "{}\n", *send_procs_iter);
-            // TODO assemble a set of block gids for each unique process found and send
-        }
-
-        // collect receiving messages
-        for (auto other_shared_it = other_shared_ents.begin(); other_shared_it != other_shared_ents.end(); other_shared_it++)
-        {
-            std::set<int> recv_procs;                   // processes from which I will receive
-            pc->get_sharing_data(&(*other_shared_it), 1, recv_procs);
-            cout << CN::EntityTypeName(mbi->type_from_handle(*other_shared_it)) << " " << mbi->id_from_handle(*other_shared_it) <<
-                " will be received from " << recv_procs.size() <<  " procs:" << endl;
-            for (auto recv_procs_iter = recv_procs.begin(); recv_procs_iter != recv_procs.end(); recv_procs_iter++)
-                fmt::print(stderr, "{}\n", *recv_procs_iter);
-            // TODO assemble a set of unique processes from which to receive, receive block gids, and add them to the link
-        }
-
-        // TODO: exchange link info with remote blocks
-
         // add the block to the master
         master.add(b->gid, b, link);
 
         // add the block to the assigner
         assigner.set_rank(world.rank(), b->gid);
 
-        // debug: print the link
-//         fmt::print(stderr, "Link for block gid {} has size {}:\n", b->gid, link->size());
-//         for (auto i = 0; i < link->size(); i++)
-//             fmt::print(stderr, "[gid, proc] = [{}, {}]\n", link->target(i).gid, link->target(i).proc);
-
     }   // for all local blocks
+
+    // get entities owned by my process and shared with other processors
+    Range shared_ents;
+    rval = pc->get_shared_entities(-1, shared_ents, MBVERTEX); ERR;
+
+    // debug
+//     cout << "shared entities: " << endl;
+//     shared_ents.print();
+
+    // shared entities owned by my process
+    Range my_shared_ents;
+    rval = pc->filter_pstatus(shared_ents, PSTATUS_NOT_OWNED, PSTATUS_NOT, -1, &my_shared_ents ); ERR;
+
+    // shared entities owned by other processes
+    Range other_shared_ents;
+    rval = pc->filter_pstatus(shared_ents, PSTATUS_NOT_OWNED, PSTATUS_AND, -1, &other_shared_ents); ERR;
+
+    // collect sending messages
+
+    // for all vertices owned by my rank and shared by other ranks
+    for (auto my_shared_it = my_shared_ents.begin(); my_shared_it != my_shared_ents.end(); my_shared_it++)
+    {
+        std::set<int> send_procs;                   // processes to which I will send
+        pc->get_sharing_data(&(*my_shared_it), 1, send_procs);
+
+        // debug
+//         cout << CN::EntityTypeName(mbi->type_from_handle(*my_shared_it)) << " " << mbi->id_from_handle(*my_shared_it) <<
+//             " will be sent to " << send_procs.size() <<  " procs:" << endl;
+//         for (auto send_procs_iter = send_procs.begin(); send_procs_iter != send_procs.end(); send_procs_iter++)
+//             fmt::print(stderr, "*send_procs_iter = {}\n", *send_procs_iter);
+
+        // assemble a set of block gids for each unique process found
+
+        // get elements sharing this vertex
+        Range adjs;
+        rval = mbi->get_adjacencies(&(*my_shared_it), 1, dim, false, adjs, Interface::UNION); ERR;
+
+        // iterate over elements sharing the vertex
+        for (auto adjs_iter = adjs.begin(); adjs_iter != adjs.end(); adjs_iter++)
+        {
+            // get block gid containing the element
+            long elem_global_id;
+            int neigh_gid;
+            rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_iter), 1, &elem_global_id); ERR;
+            auto map_it = entity_part_map.find(elem_global_id);
+            if (map_it == entity_part_map.end())
+            {
+                fmt::print(stderr, "Error: element global id {} not found in entity_part_map\n", elem_global_id);
+                abort();
+            }
+            else
+                neigh_gid = map_it->second;                                     // neighboring block containing the adjacent element
+
+            // for all procs sharing this vertex, add block gid to the map of messages to send
+            for (auto send_procs_iter = send_procs.begin(); send_procs_iter != send_procs.end(); send_procs_iter++)
+            {
+                auto found_neigh = send_neigh_blocks.find(*send_procs_iter);
+                if (found_neigh == send_neigh_blocks.end()) // rank does not exist yet
+                {
+                    std::pair<int, set<int>> new_neigh;
+                    new_neigh.first = *send_procs_iter;
+                    new_neigh.second.insert(neigh_gid);
+                    send_neigh_blocks.insert(new_neigh);
+
+                    // debug
+//                     fmt::print(stderr, "inserting new new_neigh first {} second [{}]\n", new_neigh.first, fmt::join(new_neigh.second, ","));
+                }
+                else        // rank exists already
+                {
+                    found_neigh->second.insert(neigh_gid);
+
+                    // debug
+//                     fmt::print(stderr, "inserting found new_neigh first {} second [{}]\n", found_neigh->first, fmt::join(found_neigh->second, ","));
+                }
+            }   // procs sharing the vertex
+        }   // elements sharing the vertex
+    }   // for all vertices owned by my rank and shared by other ranks
+
+    // debug: print send_neigh_blocks
+    for (auto neigh_it = send_neigh_blocks.begin(); neigh_it != send_neigh_blocks.end(); neigh_it++)
+        fmt::print(stderr, "sending neighboring blocks to proc {}: [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+
+    // TODO: post messages
+
+    // collect receiving messages
+
+    // for all shared vertices owned by other ranks
+    for (auto other_shared_it = other_shared_ents.begin(); other_shared_it != other_shared_ents.end(); other_shared_it++)
+    {
+        std::set<int> recv_procs;                   // processes from which I will receive
+        pc->get_sharing_data(&(*other_shared_it), 1, recv_procs);
+
+        // debug
+//         cout << CN::EntityTypeName(mbi->type_from_handle(*other_shared_it)) << " " << mbi->id_from_handle(*other_shared_it) <<
+//             " will be received from " << recv_procs.size() <<  " procs:" << endl;
+//         for (auto recv_procs_iter = recv_procs.begin(); recv_procs_iter != recv_procs.end(); recv_procs_iter++)
+//             fmt::print(stderr, "{}\n", *recv_procs_iter);
+
+        // assemble a set of block gids for each unique process found
+
+        // get elements sharing this vertex
+        Range adjs;
+        rval = mbi->get_adjacencies(&(*other_shared_it), 1, dim, false, adjs, Interface::UNION); ERR;
+
+        // iterate over elements sharing the vertex
+        for (auto adjs_iter = adjs.begin(); adjs_iter != adjs.end(); adjs_iter++)
+        {
+            // get block gid containing the element
+            long elem_global_id;
+            int neigh_gid;
+            rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_iter), 1, &elem_global_id); ERR;
+            auto map_it = entity_part_map.find(elem_global_id);
+            if (map_it == entity_part_map.end())
+            {
+                fmt::print(stderr, "Error: element global id {} not found in entity_part_map\n", elem_global_id);
+                abort();
+            }
+            else
+                neigh_gid = map_it->second;                                     // neighboring block containing the adjacent element
+
+            // for all procs sharing this vertex, add block gid to the map of messages to receive
+            for (auto recv_procs_iter = recv_procs.begin(); recv_procs_iter != recv_procs.end(); recv_procs_iter++)
+            {
+                auto found_neigh = recv_neigh_blocks.find(*recv_procs_iter);
+                if (found_neigh == recv_neigh_blocks.end()) // rank does not exist yet
+                {
+                    std::pair<int, set<int>> new_neigh;
+                    new_neigh.first = *recv_procs_iter;
+                    new_neigh.second.insert(neigh_gid);
+                    recv_neigh_blocks.insert(new_neigh);
+
+                    // debug
+//                     fmt::print(stderr, "inserting new new_neigh first {} second [{}]\n", new_neigh.first, fmt::join(new_neigh.second, ","));
+                }
+                else        // rank exists already
+                {
+                    found_neigh->second.insert(neigh_gid);
+
+                    // debug
+//                     fmt::print(stderr, "inserting found new_neigh first {} second [{}]\n", found_neigh->first, fmt::join(found_neigh->second, ","));
+                }
+            }   // procs sharing the vertex
+        }   // elements sharing the vertex
+    }   // for all shared vertices owned by other ranks
+
+    // debug: print recv_neigh_blocks
+    for (auto neigh_it = recv_neigh_blocks.begin(); neigh_it != recv_neigh_blocks.end(); neigh_it++)
+        fmt::print(stderr, "receiving neighboring blocks from proc {}: [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+
+
+    // TODO post recv messages
+
+    // TODO: exchange link info with remote blocks
+
+    // TODO: update the link
+
+    // debug: print the link
+    //         fmt::print(stderr, "Link for block gid {} has size {}:\n", b->gid, link->size());
+    //         for (auto i = 0; i < link->size(); i++)
+    //             fmt::print(stderr, "[gid, proc] = [{}, {}]\n", link->target(i).gid, link->target(i).proc);
 
     // write output file for debugging
     rval = mbi->write_file(outfile.c_str(), 0, write_opts.c_str(), &root, 1); ERR;
