@@ -42,6 +42,7 @@ struct Block
 
 using NeighBlocks       = std::map<int, std::set<int>>;         // map of neighboring blocks for one rank (vertex gid, block gid)
 using ProcNeighBlocks   = std::map<int, NeighBlocks>;           // map of neighboring blocks for all ranks (rank, neigh_blocks))
+using EntityPart        = std::map<long, int>;                  // entity global id -> part id
 
 #define ERR {if(rval!=MB_SUCCESS)printf("MOAB error at line %d in %s\n", __LINE__, __FILE__);}
 
