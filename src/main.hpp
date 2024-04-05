@@ -40,7 +40,8 @@ struct Block
   EntityHandle  eh;     // root of everything moab-related in this block
 };
 
-using NeighBlocks   = std::map<int, std::set<int>>;      // map of neighboring (rank, blocks)
+using NeighBlocks       = std::map<int, std::set<int>>;         // map of neighboring blocks for one rank (vertex gid, block gid)
+using ProcNeighBlocks   = std::map<int, NeighBlocks>;           // map of neighboring blocks for all ranks (rank, neigh_blocks))
 
 #define ERR {if(rval!=MB_SUCCESS)printf("MOAB error at line %d in %s\n", __LINE__, __FILE__);}
 

@@ -88,7 +88,7 @@ int main(int argc, char**argv)
     // create a dynamic assinger because we need to explicitly specify how many each rank has
     diy::DynamicAssigner assigner(world, world.size(), tot_nblocks);
 
-    NeighBlocks send_neigh_blocks, recv_neigh_blocks;   // map of (neighboring rank, vector of my neighboring blocks) to send, receive
+    ProcNeighBlocks send_neigh_blocks, recv_neigh_blocks;  // map of neighboring blocks to send, receive
 
     // loop over local blocks, filling in the map of entities to parts
     Range::iterator part_it;
@@ -101,13 +101,18 @@ int main(int argc, char**argv)
         // get all entities in the block
         Range ents;
         rval = mbi->get_entities_by_handle(*part_it, ents); ERR;
-        fmt::print(stderr, "part_id (block gid) = {} ents.size() = {}\n", part_id, ents.size());
+
+        // debug
+//         fmt::print(stderr, "part_id (block gid) = {} ents.size() = {}\n", part_id, ents.size());
+
         for (auto ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
         {
             int ent_global_id;                          // globally unique ID for the entity
             rval = mbi->tag_get_data(mbi->globalId_tag(), &(*ents_it), 1, &ent_global_id); ERR;
-//             fmt::print(stderr, "Entity local id {} global id {}\n", mbi->id_from_handle(*ents_it), ent_global_id);
             entity_part_map.emplace(ent_global_id, part_id);
+
+            // debug
+//             fmt::print(stderr, "Entity local id {} global id {}\n", mbi->id_from_handle(*ents_it), ent_global_id);
         }
     }
 
@@ -141,6 +146,7 @@ int main(int argc, char**argv)
             rval = mbi->get_connectivity(&(*ents_it), 1, verts); ERR;
             for (auto verts_it = verts.begin(); verts_it != verts.end(); ++verts_it)
             {
+
                 // get elements sharing this vertex
                 Range adjs;
                 rval = mbi->get_adjacencies(&(*verts_it), 1, dim, false, adjs, Interface::UNION); ERR;
@@ -234,34 +240,63 @@ int main(int argc, char**argv)
             else
                 neigh_gid = map_it->second;                                     // neighboring block containing the adjacent element
 
+            int vert_global_id;                                                 // globally unique ID for the entity
+            rval = mbi->tag_get_data(mbi->globalId_tag(), &(*my_shared_it), 1, &vert_global_id); ERR;
+
+            // debug
+//             cerr << " Vertex " << mbi->id_from_handle(*my_shared_it) << " global id " << vert_global_id << " neigh_gid " << neigh_gid << endl;
+
             // for all procs sharing this vertex, add block gid to the map of messages to send
             for (auto send_procs_iter = send_procs.begin(); send_procs_iter != send_procs.end(); send_procs_iter++)
             {
-                auto found_neigh = send_neigh_blocks.find(*send_procs_iter);
-                if (found_neigh == send_neigh_blocks.end()) // rank does not exist yet
+                std::pair<int, set<int>> new_neigh;                             // (vertex gid, block gid)
+                new_neigh.first = vert_global_id;
+                new_neigh.second.insert(neigh_gid);
+
+                auto found_proc = send_neigh_blocks.find(*send_procs_iter);
+                if (found_proc == send_neigh_blocks.end())                      // proc does not exist yet
                 {
-                    std::pair<int, set<int>> new_neigh;
-                    new_neigh.first = *send_procs_iter;
-                    new_neigh.second.insert(neigh_gid);
-                    send_neigh_blocks.insert(new_neigh);
+                    std::pair<int, NeighBlocks>  proc_new_neigh;                // (proc, new_neigh)
+                    proc_new_neigh.first = *send_procs_iter;
+                    proc_new_neigh.second.insert(new_neigh);
+                    send_neigh_blocks.insert(proc_new_neigh);
 
                     // debug
-//                     fmt::print(stderr, "inserting new new_neigh first {} second [{}]\n", new_neigh.first, fmt::join(new_neigh.second, ","));
+//                     fmt::print(stderr, "send_neigh_blocks: inserting new proc {} new new_neigh first {} second [{}]\n",
+//                     proc_new_neigh.first, new_neigh.first, fmt::join(new_neigh.second, ","));
                 }
-                else        // rank exists already
+                else                                                            // proc exists already
                 {
-                    found_neigh->second.insert(neigh_gid);
+                    auto found_neigh = found_proc->second.find(new_neigh.first);
+                    if (found_neigh == found_proc->second.end())                // vertex gid does not exist yet
+                    {
+                        found_proc->second.insert(new_neigh);
 
-                    // debug
-//                     fmt::print(stderr, "inserting found new_neigh first {} second [{}]\n", found_neigh->first, fmt::join(found_neigh->second, ","));
+                        // debug
+//                         fmt::print(stderr, "send_neigh_blocks: inserting existing proc {} new new_neigh first {} second [{}]\n",
+//                                 found_proc.first, new_neigh.first, fmt::join(new_neigh.second, ","));
+                    }
+                    else                                                        // vertex gid exists already
+                    {
+                        found_neigh->second.insert(neigh_gid);
+
+                        // debug
+//                         fmt::print(stderr, "send_neigh_blocks: inserting existing proc {} existing new_neigh first {} second [{}]\n",
+//                                 found_proc.first, found_neigh.first, fmt::join(new_neigh.second, ","));
+                    }
                 }
+
             }   // procs sharing the vertex
         }   // elements sharing the vertex
     }   // for all vertices owned by my rank and shared by other ranks
 
     // debug: print send_neigh_blocks
-    for (auto neigh_it = send_neigh_blocks.begin(); neigh_it != send_neigh_blocks.end(); neigh_it++)
-        fmt::print(stderr, "sending neighboring blocks to proc {}: [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+    for (auto proc_it = send_neigh_blocks.begin(); proc_it != send_neigh_blocks.end(); proc_it++)
+    {
+        fmt::print(stderr, "sending neighboring blocks to proc {}:\n", proc_it->first);
+        for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
+            fmt::print(stderr, "vid {}: block gids [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+    }
 
     // TODO: post messages
 
@@ -301,35 +336,62 @@ int main(int argc, char**argv)
             else
                 neigh_gid = map_it->second;                                     // neighboring block containing the adjacent element
 
+            int vert_global_id;                                                 // globally unique ID for the entity
+            rval = mbi->tag_get_data(mbi->globalId_tag(), &(*other_shared_it), 1, &vert_global_id); ERR;
+
+            // debug
+//             cerr << " Vertex " << mbi->id_from_handle(*other_shared_it) << " global id " << vert_global_id << " neigh_gid " << neigh_gid << endl;
+
             // for all procs sharing this vertex, add block gid to the map of messages to receive
             for (auto recv_procs_iter = recv_procs.begin(); recv_procs_iter != recv_procs.end(); recv_procs_iter++)
             {
-                auto found_neigh = recv_neigh_blocks.find(*recv_procs_iter);
-                if (found_neigh == recv_neigh_blocks.end()) // rank does not exist yet
+                std::pair<int, set<int>> new_neigh;
+                new_neigh.first = vert_global_id;
+                new_neigh.second.insert(neigh_gid);
+
+                auto found_proc = recv_neigh_blocks.find(*recv_procs_iter);
+                if (found_proc == recv_neigh_blocks.end()) // proc does not exist yet
                 {
-                    std::pair<int, set<int>> new_neigh;
-                    new_neigh.first = *recv_procs_iter;
-                    new_neigh.second.insert(neigh_gid);
-                    recv_neigh_blocks.insert(new_neigh);
+                    std::pair<int, NeighBlocks>  proc_new_neigh;                // (proc, new_neigh)
+                    proc_new_neigh.first = *recv_procs_iter;
+                    proc_new_neigh.second.insert(new_neigh);
+                    recv_neigh_blocks.insert(proc_new_neigh);
 
                     // debug
-//                     fmt::print(stderr, "inserting new new_neigh first {} second [{}]\n", new_neigh.first, fmt::join(new_neigh.second, ","));
+//                     fmt::print(stderr, "recv_neigh_blocks: inserting new proc {} new new_neigh first {} second [{}]\n",
+//                     proc_new_neigh.first, new_neigh.first, fmt::join(new_neigh.second, ","));
                 }
-                else        // rank exists already
+                else        // proc exists already
                 {
-                    found_neigh->second.insert(neigh_gid);
+                    auto found_neigh = found_proc->second.find(new_neigh.first);
+                    if (found_neigh == found_proc->second.end())                // vertex gid does not exist yet
+                    {
+                        found_proc->second.insert(new_neigh);
 
-                    // debug
-//                     fmt::print(stderr, "inserting found new_neigh first {} second [{}]\n", found_neigh->first, fmt::join(found_neigh->second, ","));
+                        // debug
+//                         fmt::print(stderr, "recv_neigh_blocks: inserting existing proc {} new new_neigh first {} second [{}]\n",
+//                                 found_proc.first, new_neigh.first, fmt::join(new_neigh.second, ","));
+                    }
+                    else                                                        // vertex gid exists already
+                    {
+                        found_neigh->second.insert(neigh_gid);
+
+                        // debug
+//                         fmt::print(stderr, "recv_neigh_blocks: inserting existing proc {} existing new_neigh first {} second [{}]\n",
+//                                 found_proc.first, found_neigh.first, fmt::join(new_neigh.second, ","));
+                    }
                 }
             }   // procs sharing the vertex
         }   // elements sharing the vertex
     }   // for all shared vertices owned by other ranks
 
     // debug: print recv_neigh_blocks
-    for (auto neigh_it = recv_neigh_blocks.begin(); neigh_it != recv_neigh_blocks.end(); neigh_it++)
-        fmt::print(stderr, "receiving neighboring blocks from proc {}: [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
-
+    for (auto proc_it = recv_neigh_blocks.begin(); proc_it != recv_neigh_blocks.end(); proc_it++)
+    {
+        fmt::print(stderr, "receiving neighboring blocks from proc {}:\n", proc_it->first);
+        for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
+            fmt::print(stderr, "vid {}: block gids [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+    }
 
     // TODO post recv messages
 
