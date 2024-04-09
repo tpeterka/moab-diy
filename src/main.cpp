@@ -104,6 +104,11 @@ void collect_local_blocks(const Range&          parts,                          
         // add the block to the assigner
         assigner.set_rank(master.communicator().rank(), b->gid);
 
+        // debug: print the link before remote exchange
+//         fmt::print(stderr, "Link before exchange for block gid {} has size {}:\n", b->gid, link->size());
+//         for (auto i = 0; i < link->size(); i++)
+//             fmt::print(stderr, "[gid, proc] = [{}, {}]\n", link->target(i).gid, link->target(i).proc);
+
     }   // for all local blocks
 }
 
@@ -203,12 +208,132 @@ void collect_neigh_info(const Range&        shared_verts,                       
     }   // for all vertices owned by my rank and shared by other ranks
 
     // debug: print shared_neigh_blocks
+//     for (auto proc_it = shared_neigh_blocks.begin(); proc_it != shared_neigh_blocks.end(); proc_it++)
+//     {
+//         fmt::print(stderr, "sharing neighboring blocks with proc {}:\n", proc_it->first);
+//         for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
+//             fmt::print(stderr, "vid {}: block gids [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+//     }
+}
+
+// send neighbor info to other processes
+void send_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,
+                     diy::mpi::communicator&    comm)
+{
+    std::vector<int> msg;
+
+    // for all procs in the neighbor info
     for (auto proc_it = shared_neigh_blocks.begin(); proc_it != shared_neigh_blocks.end(); proc_it++)
     {
-        fmt::print(stderr, "sharing neighboring blocks with proc {}:\n", proc_it->first);
+        int dest_proc = proc_it->first;
+        // for all vertex ids for this proc
         for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
-            fmt::print(stderr, "vid {}: block gids [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+        {
+            msg.clear();
+            msg.push_back(neigh_it->first);      // vertex gid
+
+            // for all blocks for this vertex
+            for (auto block_it = neigh_it->second.begin(); block_it != neigh_it->second.end(); block_it++)
+                msg.push_back(*block_it);
+
+            comm.send(dest_proc, 0, msg);
+        }
     }
+}
+
+// receive neighbor info from other processes
+// update the links based on received info
+void recv_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,        // neighbor blocks being shared
+                     const ProcNeighBlocks&     extra_neigh_blocks,         // additional blocks with my local info (optional)
+                     const diy::Master&         master,
+                     diy::mpi::communicator&    comm)
+{
+    std::vector<int> msg;
+
+    // for all procs in the neighbor info
+    for (auto proc_it = shared_neigh_blocks.begin(); proc_it != shared_neigh_blocks.end(); proc_it++)
+    {
+        int src_proc = proc_it->first;
+
+        // for all messages arriving from this proc (vertex, block, block ...)
+        for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
+        {
+            msg.clear();
+            comm.recv(src_proc, 0, msg);
+
+            // sanity check
+            if (msg.size() < 2)
+            {
+                fmt::print(stderr, "Error: recv_neigh_info() message size is {} ints (< 2)\n", msg.size());
+                abort();
+            }
+
+            // debug
+//             fmt::print(stderr, "received from proc {}: [{}]\n", src_proc, fmt::join(msg, ","));
+
+            // match received info with my own info by vertex id (globally unique)
+            int vid = msg[0];                       // vertex gid
+
+            // check shared_neigh_blocks for a matching vid
+            auto vert_it = proc_it->second.find(vid);
+            if (vert_it != proc_it->second.end())
+            {
+                // debug
+//                 fmt::print(stderr, "recv_neigh_info() matched message [{}] with shared_neigh_blocks [{}]\n",
+//                         fmt::join(msg, ","), fmt::join(vert_it->second, ","));
+
+                // update the link for my local blocks matching the message
+                diy::BlockID block_id;
+                for (auto block_it = vert_it->second.begin(); block_it != vert_it->second.end(); block_it++)
+                {
+                    diy::Link* link = master.link(master.lid(*block_it));
+
+                    for (auto i = 1; i < msg.size(); i++)       // msg[0] is the vertex id, received block gids start at msg[1]
+                    {
+                        if (link->find(msg[i]) == -1)           // block not linked yet
+                        {
+                            block_id.gid = msg[i];
+                            block_id.proc = src_proc;
+                            link->add_neighbor(block_id);
+                        }
+                    }
+                }
+            }
+
+            // check extra_neigh_blocks for a matching vid
+            if (extra_neigh_blocks.size())
+            {
+                auto extra_proc_it = extra_neigh_blocks.find(src_proc);
+                if (extra_proc_it != extra_neigh_blocks.end())
+                {
+                    auto extra_vert_it = extra_proc_it->second.find(vid);
+                    if (extra_vert_it != extra_proc_it->second.end())
+                    {
+                        // debug
+//                         fmt::print(stderr, "recv_neigh_info() matched message [{}] with extra_neigh_blocks [{}]\n",
+//                                 fmt::join(msg, ","), fmt::join(extra_vert_it->second, ","));
+
+                        // update the link for my local blocks matching the message
+                        diy::BlockID block_id;
+                        for (auto block_it = vert_it->second.begin(); block_it != vert_it->second.end(); block_it++)
+                        {
+                            diy::Link* link = master.link(master.lid(*block_it));
+
+                            for (auto i = 1; i < msg.size(); i++)       // msg[0] is the vertex id, received block gids start at msg[1]
+                            {
+                                if (link->find(msg[i]) == -1)           // block not linked yet
+                                {
+                                    block_id.gid = msg[i];
+                                    block_id.proc = src_proc;
+                                    link->add_neighbor(block_id);
+                                }
+                            }
+                        }   // for (auto block_it ...
+                    }   // if (extra_vert ...
+                }   // if (extra_proc_it ...
+            }   // if (extra_neigh_blocks.size()
+        }   // for all messages arriving from this proc
+    }   // for all procs
 }
 
 int main(int argc, char**argv)
@@ -256,7 +381,7 @@ int main(int argc, char**argv)
     ErrorCode                       rval;
     rval = mbi->create_meshset(MESHSET_SET, root); ERR;
 
-#if 0
+#if 1
 
     // create mesh in memory
     PrepMesh(mesh_type, mesh_size, mesh_slab, mbi, pc, root, factor, false);
@@ -324,19 +449,25 @@ int main(int argc, char**argv)
     ProcNeighBlocks other_neigh_info;
     collect_neigh_info(other_shared_ents, mbi, pc, entity_part_map, dim, other_neigh_info);
 
-    // TODO: exchange link info with remote blocks
+    // exchange neighbor info with other procs
+    send_neigh_info(my_neigh_info, world);
+    send_neigh_info(other_neigh_info, world);
+    recv_neigh_info(my_neigh_info, other_neigh_info, master, world);
+    recv_neigh_info(other_neigh_info, my_neigh_info, master, world);
 
-    // TODO: update the link
-
-    // debug: print the link
-    //         fmt::print(stderr, "Link for block gid {} has size {}:\n", b->gid, link->size());
-    //         for (auto i = 0; i < link->size(); i++)
-    //             fmt::print(stderr, "[gid, proc] = [{}, {}]\n", link->target(i).gid, link->target(i).proc);
+    // debug: print the link after remote exchange
+    for (auto i = 0; i < master.size(); i++)
+    {
+        Block*      b    = static_cast<Block*>(master.block(i));
+        diy::Link*  link = master.link(i);
+        fmt::print(stderr, "Link after exchange for block gid {} has size {}:\n", b->gid, link->size());
+        for (auto i = 0; i < link->size(); i++)
+            fmt::print(stderr, "[gid, proc] = [{}, {}]\n", link->target(i).gid, link->target(i).proc);
+    }
 
     // write output file for debugging
     rval = mbi->write_file(outfile.c_str(), 0, write_opts.c_str(), &root, 1); ERR;
 
     return 0;
-
 }
 
