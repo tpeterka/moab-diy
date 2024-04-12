@@ -45,7 +45,6 @@ void build_entity_part_map(const Range&     parts,                              
     // debug: print the entity_part_map
 //     for (auto it = entity_part_map.begin(); it != entity_part_map.end(); it++)
 //         fmt::print(stderr, "entity_part_map[{}] = {}\n", it->first, it->second);
-
 }
 
 // loop over local blocks, filling in their entities, adding blocks to the master, assigner, creating their links
@@ -172,8 +171,8 @@ void collect_neigh_info(const Range&            shared_verts,                   
             // get block gid containing the element
             int elem_global_id;
             int neigh_gid;
+
             rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_iter), 1, &elem_global_id); ERR;
-//             fmt::print(stderr, "elem_global_id = {}\n", elem_global_id);
             auto map_it = entity_part_map.find(elem_global_id);
             if (map_it == entity_part_map.end())
             {
@@ -482,11 +481,6 @@ int main(int argc, char**argv)
     // get entities owned by my process and shared with other processors
     Range shared_ents;
     rval = pc->get_shared_entities(-1, shared_ents, MBVERTEX); ERR;
-
-    // debug
-    int ent_global_id;
-    rval = mbi->tag_get_data(mbi->globalId_tag(), &(*shared_ents.begin()), 1, &ent_global_id); ERR;
-    fmt::print(stderr, "ent_global_id = {}\n", ent_global_id);
 
     // shared entities owned by my process
     Range my_shared_ents;

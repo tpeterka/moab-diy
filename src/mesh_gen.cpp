@@ -152,9 +152,6 @@ void create_hexes_and_verts(int *mesh_size,     // mesh size (i,j,k) number of v
 
     // set global ids
     long gid;
-    Tag global_id_tag;
-    rval = mbint->tag_get_handle("GLOBAL_ID", sizeof(long), MB_TYPE_OPAQUE,
-            global_id_tag, MB_TAG_CREAT|MB_TAG_DENSE); ERR;
 
     // gids for vertices, starting at 1 by moab convention
     handle = startv;
@@ -167,7 +164,7 @@ void create_hexes_and_verts(int *mesh_size,     // mesh size (i,j,k) number of v
                 gid = (long)1 + (long)i + (long)j * (mesh_size[0]) +
                     (long)k * (mesh_size[0]) * (mesh_size[1]);
 //                 fprintf(stderr, "i,j,k = [%d %d %d] gid = %ld\n", i, j, k, gid);
-                rval = mbint->tag_set_data(global_id_tag, &handle, 1, &gid); ERR;
+                rval = mbint->tag_set_data(mbint->globalId_tag(), &handle, 1, &gid); ERR;
                 handle++;
             }
         }
@@ -184,7 +181,7 @@ void create_hexes_and_verts(int *mesh_size,     // mesh size (i,j,k) number of v
                 gid = (long)1 + (long)i + (long)j * (mesh_size[0] - 1) +
                     (long)k * (mesh_size[0] - 1) * (mesh_size[1] - 1);
 //                 fprintf(stderr, "i,j,k = [%d %d %d] gid = %ld\n", i, j, k, gid);
-                rval = mbint->tag_set_data(global_id_tag, &handle, 1, &gid); ERR;
+                rval = mbint->tag_set_data(mbint->globalId_tag(), &handle, 1, &gid); ERR;
                 handle++;
             }
         }
@@ -368,8 +365,6 @@ void create_tets_and_verts(int *mesh_size,      // mesh size (i,j,k) number of v
 
     // set global ids
     long gid;
-    Tag global_id_tag;
-    rval = mbint->tag_get_handle("GLOBAL_ID", sizeof(long), MB_TYPE_OPAQUE, global_id_tag, MB_TAG_CREAT|MB_TAG_DENSE); ERR;
 
     // gids for vertices, starting at 1 by moab convention
     handle = startv;
@@ -383,7 +378,7 @@ void create_tets_and_verts(int *mesh_size,      // mesh size (i,j,k) number of v
                     (long)k * (mesh_size[0]) * (mesh_size[1]);
                 // debug
                 //                 fprintf(stderr, "i,j,k = [%d %d %d] gid = %ld\n", i, j, k, gid);
-                rval = mbint->tag_set_data(global_id_tag, &handle, 1, &gid); ERR;
+                rval = mbint->tag_set_data(mbint->globalId_tag(), &handle, 1, &gid); ERR;
                 handle++;
             }
         }
@@ -401,8 +396,8 @@ void create_tets_and_verts(int *mesh_size,      // mesh size (i,j,k) number of v
                 {
                     gid = (long)1 + (long)t +  (long)i * 6 + (long)j * 6 * (mesh_size[0] - 1) +
                         (long)k * 6 * (mesh_size[0] - 1) * (mesh_size[1] - 1);
-                    // 	 fprintf(stderr, "t,i,j,k = [%d %d %d %d] gid = %ld\n", t, i, j, k, gid);
-                    rval = mbint->tag_set_data(global_id_tag, &handle, 1, &gid); ERR;
+                    //  fprintf(stderr, "t,i,j,k = [%d %d %d %d] gid = %ld\n", t, i, j, k, gid);
+                    rval = mbint->tag_set_data(mbint->globalId_tag(), &handle, 1, &gid); ERR;
                     handle++;
                 }
             }
@@ -442,8 +437,7 @@ void resolve_and_exchange(Interface *mbint,       // mbint: moab interface insta
     ErrorCode rval;
 
     mbpc->partition_sets().insert(*mesh_set);
-    Tag global_id_tag;
-    rval = mbint->tag_get_handle("GLOBAL_ID", sizeof(long), MB_TYPE_OPAQUE, global_id_tag, MB_TAG_DENSE); ERR;
+    Tag global_id_tag = mbint->globalId_tag();
     rval = mbpc->resolve_shared_ents(*mesh_set, -1, -1, &global_id_tag); ERR;
 }
 
