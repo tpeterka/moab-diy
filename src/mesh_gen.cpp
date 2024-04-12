@@ -153,7 +153,7 @@ void create_hexes_and_verts(int *mesh_size,     // mesh size (i,j,k) number of v
     // set global ids
     long gid;
     Tag global_id_tag;
-    rval = mbint->tag_get_handle("HANDLEID", sizeof(long), MB_TYPE_OPAQUE,
+    rval = mbint->tag_get_handle("GLOBAL_ID", sizeof(long), MB_TYPE_OPAQUE,
             global_id_tag, MB_TAG_CREAT|MB_TAG_DENSE); ERR;
 
     // gids for vertices, starting at 1 by moab convention
@@ -369,8 +369,7 @@ void create_tets_and_verts(int *mesh_size,      // mesh size (i,j,k) number of v
     // set global ids
     long gid;
     Tag global_id_tag;
-    rval = mbint->tag_get_handle("HANDLEID", sizeof(long), MB_TYPE_OPAQUE,
-            global_id_tag, MB_TAG_CREAT|MB_TAG_DENSE); ERR;
+    rval = mbint->tag_get_handle("GLOBAL_ID", sizeof(long), MB_TYPE_OPAQUE, global_id_tag, MB_TAG_CREAT|MB_TAG_DENSE); ERR;
 
     // gids for vertices, starting at 1 by moab convention
     handle = startv;
@@ -444,7 +443,7 @@ void resolve_and_exchange(Interface *mbint,       // mbint: moab interface insta
 
     mbpc->partition_sets().insert(*mesh_set);
     Tag global_id_tag;
-    rval = mbint->tag_get_handle("HANDLEID", sizeof(long), MB_TYPE_OPAQUE, global_id_tag, MB_TAG_DENSE); ERR;
+    rval = mbint->tag_get_handle("GLOBAL_ID", sizeof(long), MB_TYPE_OPAQUE, global_id_tag, MB_TAG_DENSE); ERR;
     rval = mbpc->resolve_shared_ents(*mesh_set, -1, -1, &global_id_tag); ERR;
 }
 

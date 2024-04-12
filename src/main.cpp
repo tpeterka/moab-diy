@@ -1,5 +1,6 @@
 #include "main.hpp"
 #include "opts.h"
+#include "stdio.h"
 
 // construct map of entities to parts (blocks)
 void build_entity_part_map(const Range&     parts,                              // parts in the partition
@@ -26,6 +27,9 @@ void build_entity_part_map(const Range&     parts,                              
         rval = mbi->tag_get_data(mbi->globalId_tag(), &(*ents.begin()), 1, &ent_global_id); ERR;
         if (ent_global_id == -1)
         {
+            // debug
+            fmt::print(stderr, "No global ids were assigned; generating global ids now.\n");
+
             pc->assign_global_ids(*part_it, dim);
             pc->assign_global_ids(*part_it, 0);
         }
@@ -74,9 +78,9 @@ void collect_local_blocks(const Range&          parts,                          
         for (auto ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
         {
             // debug
-            int elem_global_id;
-            rval = mbi->tag_get_data(mbi->globalId_tag(), &(*ents_it), 1, &elem_global_id); ERR;
-            fmt::print(stderr, "elem_global_id = {}\n", elem_global_id);
+//             int elem_global_id;
+//             rval = mbi->tag_get_data(mbi->globalId_tag(), &(*ents_it), 1, &elem_global_id); ERR;
+//             fmt::print(stderr, "elem_global_id = {}\n", elem_global_id);
 
             // get vertices comprising the element
             Range verts;
@@ -84,9 +88,9 @@ void collect_local_blocks(const Range&          parts,                          
             for (auto verts_it = verts.begin(); verts_it != verts.end(); ++verts_it)
             {
                 // debug
-                int vert_global_id;
-                rval = mbi->tag_get_data(mbi->globalId_tag(), &(*verts_it), 1, &vert_global_id); ERR;
-                fmt::print(stderr, "vert_global_id = {}\n", vert_global_id);
+//                 int vert_global_id;
+//                 rval = mbi->tag_get_data(mbi->globalId_tag(), &(*verts_it), 1, &vert_global_id); ERR;
+//                 fmt::print(stderr, "vert_global_id = {}\n", vert_global_id);
 
                 // get elements sharing this vertex
                 Range adjs;
@@ -234,12 +238,12 @@ void collect_neigh_info(const Range&            shared_verts,                   
     }   // for all vertices owned by my rank and shared by other ranks
 
     // debug: print shared_neigh_blocks
-    for (auto proc_it = shared_neigh_blocks.begin(); proc_it != shared_neigh_blocks.end(); proc_it++)
-    {
-        fmt::print(stderr, "sharing neighboring blocks with proc {}:\n", proc_it->first);
-        for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
-            fmt::print(stderr, "vid {}: block gids [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
-    }
+//     for (auto proc_it = shared_neigh_blocks.begin(); proc_it != shared_neigh_blocks.end(); proc_it++)
+//     {
+//         fmt::print(stderr, "sharing neighboring blocks with proc {}:\n", proc_it->first);
+//         for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
+//             fmt::print(stderr, "vid {}: block gids [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+//     }
 }
 
 // send neighbor info to other processes
@@ -263,12 +267,12 @@ void send_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,
                 msg.push_back(*block_it);
 
             // debug
-            fmt::print(stderr, "sending message size {} to proc {}\n", msg.size(), dest_proc);
+//             fmt::print(stderr, "sending message size {} to proc {}\n", msg.size(), dest_proc);
 
             comm.send(dest_proc, 0, msg);
 
             // debug
-            fmt::print(stderr, "sent message size {} to proc {}\n", msg.size(), dest_proc);
+//             fmt::print(stderr, "sent message size {} to proc {}\n", msg.size(), dest_proc);
         }
     }
 }
@@ -293,12 +297,12 @@ void recv_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,        // n
             msg.clear();
 
             // debug
-            fmt::print(stderr, "receiving message from proc {}\n",  src_proc);
+//             fmt::print(stderr, "receiving message from proc {}\n",  src_proc);
 
             comm.recv(src_proc, 0, msg);
 
             // debug
-            fmt::print(stderr, "received message size {} from proc {}\n", msg.size(), src_proc);
+//             fmt::print(stderr, "received message size {} from proc {}\n", msg.size(), src_proc);
 
             // sanity check
             if (msg.size() < 2)
@@ -406,7 +410,7 @@ int main(int argc, char**argv)
     // moab options
     std::string infile      = "/home/tpeterka/software/moab-diy/sample_data/mpas_2d_source_p128.h5m";
     std::string read_opts   = "PARALLEL=READ_PART;PARTITION=PARALLEL_PARTITION;PARALLEL_RESOLVE_SHARED_ENTS;DEBUG_IO=0;";
-    std::string outfile     = "outfile.h5m";
+    std::string outfile     = "debug.h5m";
     std::string write_opts  = "PARALLEL=WRITE_PART;DEBUG_IO=0";
 
     // create moab mesh
@@ -433,6 +437,13 @@ int main(int argc, char**argv)
     rval = mbi->load_file(infile.c_str(), &root, read_opts.c_str() ); ERR;
 
 #endif
+
+    // write vtk file for debugging, one per process
+    std::string vtk_filename = "debug" + std::to_string(world.rank()) + ".vtk";
+    rval = mbi->write_file(vtk_filename.c_str(), "VTK"); ERR;
+
+    // write h5m file for debugging, one shared file
+    rval = mbi->write_file("debug.h5m", 0, write_opts.c_str(), &root, 1); ERR;
 
     // query number of local parts in the parallel moab partition
     Range   parts;
@@ -509,8 +520,6 @@ int main(int argc, char**argv)
             fmt::print(stderr, "[gid, proc] = [{}, {}]\n", link->target(i).gid, link->target(i).proc);
     }
 
-    // write output file for debugging
-    rval = mbi->write_file(outfile.c_str(), 0, write_opts.c_str(), &root, 1); ERR;
 
     return 0;
 }
