@@ -5,6 +5,8 @@
 void build_entity_part_map(const Range&     parts,                              // parts in the partition
                            Tag              part_tag,                           // moab part tag
                            Interface*       mbi,                                // moab interface
+                           ParallelComm*    pc,                                 // moab parallel communicator
+                           int              dim,                                // element dimension (2 or 3)
                            EntityPart&      entity_part_map)                    // (output) map of entity gid -> part (block) gid
 {
     ErrorCode   rval;
@@ -19,9 +21,18 @@ void build_entity_part_map(const Range&     parts,                              
         Range ents;
         rval = mbi->get_entities_by_handle(*part_it, ents); ERR;
 
+        // check first entity to see if global ids have been assigned; assign it if not
+        int ent_global_id;
+        rval = mbi->tag_get_data(mbi->globalId_tag(), &(*ents.begin()), 1, &ent_global_id); ERR;
+        if (ent_global_id == -1)
+        {
+            pc->assign_global_ids(*part_it, dim);
+            pc->assign_global_ids(*part_it, 0);
+        }
+
+        // write the entity_part_map
         for (auto ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
         {
-            int ent_global_id;                                                  // globally unique ID for the entity
             rval = mbi->tag_get_data(mbi->globalId_tag(), &(*ents_it), 1, &ent_global_id); ERR;
             entity_part_map.emplace(ent_global_id, part_id);
         }
@@ -62,22 +73,31 @@ void collect_local_blocks(const Range&          parts,                          
         // for all entities in local block
         for (auto ents_it = ents.begin(); ents_it != ents.end(); ++ents_it)
         {
+            // debug
+            int elem_global_id;
+            rval = mbi->tag_get_data(mbi->globalId_tag(), &(*ents_it), 1, &elem_global_id); ERR;
+            fmt::print(stderr, "elem_global_id = {}\n", elem_global_id);
+
             // get vertices comprising the element
             Range verts;
             rval = mbi->get_connectivity(&(*ents_it), 1, verts); ERR;
             for (auto verts_it = verts.begin(); verts_it != verts.end(); ++verts_it)
             {
+                // debug
+                int vert_global_id;
+                rval = mbi->tag_get_data(mbi->globalId_tag(), &(*verts_it), 1, &vert_global_id); ERR;
+                fmt::print(stderr, "vert_global_id = {}\n", vert_global_id);
 
                 // get elements sharing this vertex
                 Range adjs;
                 rval = mbi->get_adjacencies(&(*verts_it), 1, dim, false, adjs, Interface::UNION); ERR;
 
                 // iterate over adjacent elements
-                for (auto adjs_iter = adjs.begin(); adjs_iter != adjs.end(); adjs_iter++)
+                for (auto adjs_it = adjs.begin(); adjs_it != adjs.end(); adjs_it++)
                 {
                     int elem_global_id;
                     int neigh_gid;
-                    rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_iter), 1, &elem_global_id); ERR;
+                    rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_it), 1, &elem_global_id); ERR;
                     auto map_it = entity_part_map.find(elem_global_id);
                     if (map_it == entity_part_map.end())
                     {
@@ -113,12 +133,12 @@ void collect_local_blocks(const Range&          parts,                          
 }
 
 // collect neighbor information for vertices shared across process boundaries
-void collect_neigh_info(const Range&        shared_verts,                       // vertices shared by procs
-                        Interface*          mbi,                                // moab interface
-                        ParallelComm*       pc,                                 // moab parallel communicator
-                        const EntityPart&   entity_part_map,                    // map of entity gid -> part (block) gid
-                        int                 dim,                                // element dimension (2 or 3)
-                        ProcNeighBlocks&    shared_neigh_blocks)                // (output) neighbor info
+void collect_neigh_info(const Range&            shared_verts,                       // vertices shared by procs
+                        Interface*              mbi,                                // moab interface
+                        ParallelComm*           pc,                                 // moab parallel communicator
+                        const EntityPart&       entity_part_map,                    // map of entity gid -> part (block) gid
+                        int                     dim,                                // element dimension (2 or 3)
+                        ProcNeighBlocks&        shared_neigh_blocks)                // (output) neighbor info
 {
     ErrorCode rval;
 
@@ -130,8 +150,9 @@ void collect_neigh_info(const Range&        shared_verts,                       
         pc->get_sharing_data(&(*shared_it), 1, shared_procs);
 
         // debug
+//         fmt::print(stderr, "shared procs = [{}]\n", fmt::join(shared_procs, ","));
 //         cout << CN::EntityTypeName(mbi->type_from_handle(*shared_it)) << " " << mbi->id_from_handle(*shared_it) <<
-//             " will exchange with" << shared_procs.size() <<  " procs:" << endl;
+//             " will exchange with " << shared_procs.size() <<  " procs:" << endl;
 //         for (auto shared_procs_iter = shared_procs.begin(); shared_procs_iter != shared_procs.end(); shared_procs_iter++)
 //             fmt::print(stderr, "*shared_procs_iter = {}\n", *shared_procs_iter);
 
@@ -148,6 +169,7 @@ void collect_neigh_info(const Range&        shared_verts,                       
             int elem_global_id;
             int neigh_gid;
             rval = mbi->tag_get_data(mbi->globalId_tag(), &(*adjs_iter), 1, &elem_global_id); ERR;
+//             fmt::print(stderr, "elem_global_id = {}\n", elem_global_id);
             auto map_it = entity_part_map.find(elem_global_id);
             if (map_it == entity_part_map.end())
             {
@@ -166,6 +188,10 @@ void collect_neigh_info(const Range&        shared_verts,                       
             // for all procs sharing this vertex, add block gid to the map of messages to send
             for (auto shared_procs_iter = shared_procs.begin(); shared_procs_iter != shared_procs.end(); shared_procs_iter++)
             {
+                // moab sharing data includes my own proc, skip myself
+                if (*shared_procs_iter == pc->rank())
+                    continue;
+
                 std::pair<int, set<int>> new_neigh;                             // (vertex gid, block gid)
                 new_neigh.first = vert_global_id;
                 new_neigh.second.insert(neigh_gid);
@@ -208,12 +234,12 @@ void collect_neigh_info(const Range&        shared_verts,                       
     }   // for all vertices owned by my rank and shared by other ranks
 
     // debug: print shared_neigh_blocks
-//     for (auto proc_it = shared_neigh_blocks.begin(); proc_it != shared_neigh_blocks.end(); proc_it++)
-//     {
-//         fmt::print(stderr, "sharing neighboring blocks with proc {}:\n", proc_it->first);
-//         for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
-//             fmt::print(stderr, "vid {}: block gids [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
-//     }
+    for (auto proc_it = shared_neigh_blocks.begin(); proc_it != shared_neigh_blocks.end(); proc_it++)
+    {
+        fmt::print(stderr, "sharing neighboring blocks with proc {}:\n", proc_it->first);
+        for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
+            fmt::print(stderr, "vid {}: block gids [{}]\n", neigh_it->first, fmt::join(neigh_it->second, ","));
+    }
 }
 
 // send neighbor info to other processes
@@ -236,7 +262,13 @@ void send_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,
             for (auto block_it = neigh_it->second.begin(); block_it != neigh_it->second.end(); block_it++)
                 msg.push_back(*block_it);
 
+            // debug
+            fmt::print(stderr, "sending message size {} to proc {}\n", msg.size(), dest_proc);
+
             comm.send(dest_proc, 0, msg);
+
+            // debug
+            fmt::print(stderr, "sent message size {} to proc {}\n", msg.size(), dest_proc);
         }
     }
 }
@@ -259,7 +291,14 @@ void recv_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,        // n
         for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
         {
             msg.clear();
+
+            // debug
+            fmt::print(stderr, "receiving message from proc {}\n",  src_proc);
+
             comm.recv(src_proc, 0, msg);
+
+            // debug
+            fmt::print(stderr, "received message size {} from proc {}\n", msg.size(), src_proc);
 
             // sanity check
             if (msg.size() < 2)
@@ -424,7 +463,7 @@ int main(int argc, char**argv)
 
     // build map of entities -> parts (blocks)
     EntityPart      entity_part_map;                        // entity global id -> part (block) gid
-    build_entity_part_map(parts, part_tag, mbi, entity_part_map);
+    build_entity_part_map(parts, part_tag, mbi, pc, dim,  entity_part_map);
 
     // loop over local blocks, filling in their entities, adding blocks to the master, assigner, creating their links
     collect_local_blocks(parts, part_tag, mbi, dim, entity_part_map, master, assigner);
@@ -432,6 +471,11 @@ int main(int argc, char**argv)
     // get entities owned by my process and shared with other processors
     Range shared_ents;
     rval = pc->get_shared_entities(-1, shared_ents, MBVERTEX); ERR;
+
+    // debug
+    int ent_global_id;
+    rval = mbi->tag_get_data(mbi->globalId_tag(), &(*shared_ents.begin()), 1, &ent_global_id); ERR;
+    fmt::print(stderr, "ent_global_id = {}\n", ent_global_id);
 
     // shared entities owned by my process
     Range my_shared_ents;
