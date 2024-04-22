@@ -265,13 +265,10 @@ void send_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,
             for (auto block_it = neigh_it->second.begin(); block_it != neigh_it->second.end(); block_it++)
                 msg.push_back(*block_it);
 
-            // debug
-//             fmt::print(stderr, "sending message size {} to proc {}\n", msg.size(), dest_proc);
-
             comm.send(dest_proc, 0, msg);
 
             // debug
-//             fmt::print(stderr, "sent message size {} to proc {}\n", msg.size(), dest_proc);
+//             fmt::print(stderr, "sent message to proc {}: [{}]\n", dest_proc, fmt::join(msg, ","));
         }
     }
 }
@@ -294,14 +291,7 @@ void recv_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,        // n
         for (auto neigh_it = proc_it->second.begin(); neigh_it != proc_it->second.end(); neigh_it++)
         {
             msg.clear();
-
-            // debug
-//             fmt::print(stderr, "receiving message from proc {}\n",  src_proc);
-
             comm.recv(src_proc, 0, msg);
-
-            // debug
-//             fmt::print(stderr, "received message size {} from proc {}\n", msg.size(), src_proc);
 
             // sanity check
             if (msg.size() < 2)
@@ -357,7 +347,7 @@ void recv_neigh_info(const ProcNeighBlocks&     shared_neigh_blocks,        // n
 
                         // update the link for my local blocks matching the message
                         diy::BlockID block_id;
-                        for (auto block_it = vert_it->second.begin(); block_it != vert_it->second.end(); block_it++)
+                        for (auto block_it = extra_vert_it->second.begin(); block_it != extra_vert_it->second.end(); block_it++)
                         {
                             diy::Link* link = master.link(master.lid(*block_it));
 
@@ -437,12 +427,14 @@ int main(int argc, char**argv)
 
 #endif
 
-    // write vtk file for debugging, one per process
-    std::string vtk_filename = "debug" + std::to_string(world.rank()) + ".vtk";
-    rval = mbi->write_file(vtk_filename.c_str(), "VTK"); ERR;
+    // debug
+    // write vtk file, one per process
+//     std::string vtk_filename = "debug" + std::to_string(world.rank()) + ".vtk";
+//     rval = mbi->write_file(vtk_filename.c_str(), "VTK"); ERR;
 
-    // write h5m file for debugging, one shared file
-    rval = mbi->write_file("debug.h5m", 0, write_opts.c_str(), &root, 1); ERR;
+    // debug
+    // write h5m file, one shared file
+//     rval = mbi->write_file("debug.h5m", 0, write_opts.c_str(), &root, 1); ERR;
 
     // query number of local parts in the parallel moab partition
     Range   parts;
@@ -455,7 +447,7 @@ int main(int argc, char**argv)
 
     // sum all local parts to get global total number of blocks
     diy::mpi::all_reduce(world, nblocks, tot_nblocks, std::plus<int>());
-    fmt::print(stderr, "nblocks = {} tot_nblocks = {}\n", nblocks, tot_nblocks);
+    fmt::print(stderr, "number of local blocks nblocks = {} number of global blocks tot_nblocks = {}\n", nblocks, tot_nblocks);
 
     // master is in charge of local blocks
     diy::FileStorage          storage("./DIY.XXXXXX");
@@ -509,11 +501,10 @@ int main(int argc, char**argv)
     {
         Block*      b    = static_cast<Block*>(master.block(i));
         diy::Link*  link = master.link(i);
-        fmt::print(stderr, "Link after exchange for block gid {} has size {}:\n", b->gid, link->size());
+        fmt::print(stderr, "Final link for block gid {} has size {}:\n", b->gid, link->size());
         for (auto i = 0; i < link->size(); i++)
             fmt::print(stderr, "[gid, proc] = [{}, {}]\n", link->target(i).gid, link->target(i).proc);
     }
-
 
     return 0;
 }
