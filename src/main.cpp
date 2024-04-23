@@ -7,7 +7,6 @@ void build_entity_part_map(const Range&     parts,                              
                            Tag              part_tag,                           // moab part tag
                            Interface*       mbi,                                // moab interface
                            ParallelComm*    pc,                                 // moab parallel communicator
-                           int              dim,                                // element dimension (2 or 3)
                            EntityPart&      entity_part_map)                    // (output) map of entity gid -> part (block) gid
 {
     ErrorCode   rval;
@@ -30,7 +29,18 @@ void build_entity_part_map(const Range&     parts,                              
             // debug
             fmt::print(stderr, "No global ids were assigned; generating global ids now.\n");
 
-            pc->assign_global_ids(*part_it, dim);
+            // determine 2d or 3d dimensionality from type of first element and assign global ids to elements
+            EntityType type = mbi->type_from_handle(*(ents.begin()));
+            if (type > MBVERTEX && type <= MBPOLYGON)
+                pc->assign_global_ids(*part_it, 2);
+            else if (type > MBPOLYGON && type <= MBPOLYHEDRON)
+                pc->assign_global_ids(*part_it, 3);
+            else
+            {
+                fmt::print(stderr, "Error: unknown entity type.\n");
+                abort();
+            }
+            // also assign global ids to vertices
             pc->assign_global_ids(*part_it, 0);
         }
 
@@ -51,7 +61,6 @@ void build_entity_part_map(const Range&     parts,                              
 void collect_local_blocks(const Range&          parts,                          // parts in the moab partition
                           Tag                   part_tag,                       // moab part tag
                           Interface*            mbi,                            // moab interface
-                          int                   dim,                            // element dimension (2 or 3)
                           const EntityPart&     entity_part_map,                // map of entity gid -> part (block) gid
                           diy::Master&          master,                         // diy master
                           diy::DynamicAssigner& assigner)                       // diy assigner
@@ -92,8 +101,16 @@ void collect_local_blocks(const Range&          parts,                          
 //                 fmt::print(stderr, "vert_global_id = {}\n", vert_global_id);
 
                 // get elements sharing this vertex
+                // try 3d first, if empty, try 2d
                 Range adjs;
-                rval = mbi->get_adjacencies(&(*verts_it), 1, dim, false, adjs, Interface::UNION); ERR;
+                rval = mbi->get_adjacencies(&(*verts_it), 1, 3, false, adjs, Interface::UNION); ERR;
+                if (adjs.size() == 0)
+                    rval = mbi->get_adjacencies(&(*verts_it), 1, 2, false, adjs, Interface::UNION); ERR;
+                if (adjs.size() == 0)
+                {
+                    fmt::print(stderr, "Error: no adjacencies found\n");
+                    abort();
+                }
 
                 // iterate over adjacent elements
                 for (auto adjs_it = adjs.begin(); adjs_it != adjs.end(); adjs_it++)
@@ -140,7 +157,6 @@ void collect_neigh_info(const Range&            shared_verts,                   
                         Interface*              mbi,                                // moab interface
                         ParallelComm*           pc,                                 // moab parallel communicator
                         const EntityPart&       entity_part_map,                    // map of entity gid -> part (block) gid
-                        int                     dim,                                // element dimension (2 or 3)
                         ProcNeighBlocks&        shared_neigh_blocks)                // (output) neighbor info
 {
     ErrorCode rval;
@@ -162,8 +178,16 @@ void collect_neigh_info(const Range&            shared_verts,                   
         // assemble a set of block gids for each unique process found
 
         // get elements sharing this vertex
+        // try 3d first, if empty, try 2d
         Range adjs;
-        rval = mbi->get_adjacencies(&(*shared_it), 1, dim, false, adjs, Interface::UNION); ERR;
+        rval = mbi->get_adjacencies(&(*shared_it), 1, 3, false, adjs, Interface::UNION); ERR;
+        if (adjs.size() == 0)
+            rval = mbi->get_adjacencies(&(*shared_it), 1, 2, false, adjs, Interface::UNION); ERR;
+        if (adjs.size() == 0)
+        {
+            fmt::print(stderr, "Error: no adjacencies found\n");
+            abort();
+        }
 
         // iterate over elements sharing the vertex
         for (auto adjs_iter = adjs.begin(); adjs_iter != adjs.end(); adjs_iter++)
@@ -375,14 +399,18 @@ int main(int argc, char**argv)
     diy::mpi::communicator world;               // equivalent of MPI_COMM_WORLD
 
     // command line options
-    int     dim = 3;                            // domain dimensionality
+    string  input = "tet";                      // input data: "tet" synthetic dense tet mesh, "hex" synthetic dense hex mesh, "file" input file
+    int     mesh_size = 10;                     // source mesh size per side
+    string  infile;                             // file name in case of file input
     bool    help;
 
     using namespace opts;
     Options ops;
     ops
-        >> Option('d', "dimension", dim,            "domain dimensionality")
         >> Option('h', "help",      help,           "show help")
+        >> Option('i', "input",     input,          "input data type 'tet', 'hex', or 'file'")
+        >> Option('f', "filename",  infile,         "input file name in case of file input data")
+        >> Option('s', "size",      mesh_size,      "mesh size per side in case of tet or hex input data")
         ;
 
     if (!ops.parse(argc,argv) || help)
@@ -397,35 +425,30 @@ int main(int argc, char**argv)
     }
 
     // moab options
-    std::string infile      = "/home/tpeterka/software/moab-diy/sample_data/mpas_2d_source_p128.h5m";
     std::string read_opts   = "PARALLEL=READ_PART;PARTITION=PARALLEL_PARTITION;PARALLEL_RESOLVE_SHARED_ENTS;DEBUG_IO=0;";
     std::string outfile     = "debug.h5m";
     std::string write_opts  = "PARALLEL=WRITE_PART;DEBUG_IO=0";
 
     // create moab mesh
-    int                             mesh_type = 1;                          // source mesh type (0 = hex, 1 = tet)
-    int                             mesh_size = 10;                         // source mesh size per side
-    int                             mesh_slab = 0;                          // block shape (0 = cubes; 1 = slabs)
-    double                          factor = 1.0;                           // scaling factor on field values
     Interface*                      mbi = new Core();                       // moab interface
     ParallelComm*                   pc  = new ParallelComm(mbi, world);     // moab communicator
     EntityHandle                    root;
     ErrorCode                       rval;
     rval = mbi->create_meshset(MESHSET_SET, root); ERR;
 
-#if 1
-
-    // create mesh in memory
-    PrepMesh(mesh_type, mesh_size, mesh_slab, mbi, pc, root, factor, false);
-
-#else
-
-    // or
-
-    // read file
-    rval = mbi->load_file(infile.c_str(), &root, read_opts.c_str() ); ERR;
-
-#endif
+    if (input == "tet")
+        PrepMesh(1, mesh_size, 0, mbi, pc, root, 1.0, false);
+    else if (input == "hex")
+        PrepMesh(0, mesh_size, 0, mbi, pc, root, 1.0, false);
+    else if (input == "file")
+    {
+        rval = mbi->load_file(infile.c_str(), &root, read_opts.c_str() ); ERR;
+    }
+    else
+    {
+        fmt::print(stderr, "Unrecognized input type\n");
+        abort();
+    }
 
     // debug
     // write vtk file, one per process
@@ -465,10 +488,10 @@ int main(int argc, char**argv)
 
     // build map of entities -> parts (blocks)
     EntityPart      entity_part_map;                        // entity global id -> part (block) gid
-    build_entity_part_map(parts, part_tag, mbi, pc, dim,  entity_part_map);
+    build_entity_part_map(parts, part_tag, mbi, pc, entity_part_map);
 
     // loop over local blocks, filling in their entities, adding blocks to the master, assigner, creating their links
-    collect_local_blocks(parts, part_tag, mbi, dim, entity_part_map, master, assigner);
+    collect_local_blocks(parts, part_tag, mbi, entity_part_map, master, assigner);
 
     // get entities owned by my process and shared with other processors
     Range shared_ents;
@@ -484,11 +507,11 @@ int main(int argc, char**argv)
 
     // collect neighbor info for shared entities owned by my process
     ProcNeighBlocks my_neigh_info;
-    collect_neigh_info(my_shared_ents, mbi, pc, entity_part_map, dim, my_neigh_info);
+    collect_neigh_info(my_shared_ents, mbi, pc, entity_part_map, my_neigh_info);
 
     // collect neighbor info for shared entities owned by other procs
     ProcNeighBlocks other_neigh_info;
-    collect_neigh_info(other_shared_ents, mbi, pc, entity_part_map, dim, other_neigh_info);
+    collect_neigh_info(other_shared_ents, mbi, pc, entity_part_map, other_neigh_info);
 
     // exchange neighbor info with other procs
     send_neigh_info(my_neigh_info, world);

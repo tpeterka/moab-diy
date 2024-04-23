@@ -37,14 +37,27 @@ make -j install
 
 ## Running moab-diy
 
-In src/main.cpp, you can control whether to create a synthetic mesh in memory or read an input file with
-`#if 1` or `#if 0` at/around line 384.
+There are three options for input data. You can generate a synthetic mesh, either tetrahedral or hexahedral, or read in input file as follows.
+
+3d tetrahedral synthetic mesh
 
 ```
 cd build/src
-mpiexec -n <procs> ./main -d <dimension of elements, usually 2 or 3, defaults to 3>
+mpiexec -n <procs> ./main -i tet -s <size per side, optional, 10 is default>
 ```
 
-Note that the sample data file is 2d, and requires `-d 2` in the command line
+3d hexahedral synthetic mesh
+
+```
+cd build/src
+mpiexec -n <procs> ./main -i hex -s <size per side, optional, 10 is default>
+```
+
+2d or 3d input file that has been pre-partitioned. Sample input files are located in the sample_data directory.
+
+```
+cd build/src
+mpiexec -n <procs> ./main -i file -f filename
+```
 
 -----
