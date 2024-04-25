@@ -1,5 +1,5 @@
 # moab-diy
-Importing MOAB decomposition into DIY
+Importing a MOAB decomposition into DIY
 
 # Instructions for Building and Running
 
@@ -37,7 +37,7 @@ make -j install
 
 ## Running moab-diy
 
-There are three options for input data. You can generate a synthetic mesh, either tetrahedral or hexahedral, or read in input file as follows.
+There are three options for input data. You can generate a synthetic mesh, either tetrahedral or hexahedral, or read in an input file as follows.
 
 3d tetrahedral synthetic mesh
 
