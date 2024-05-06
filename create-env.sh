@@ -13,10 +13,6 @@ spack env create $SPACKENV $YAML
 echo "activating spack environment"
 spack env activate $SPACKENV
 
-# add moab-diy in develop mode
-# spack develop moab-diy@main build_type=Debug
-# spack add moab-diy
-
 # install everything in environment
 echo "installing dependencies in environment"
 spack install
